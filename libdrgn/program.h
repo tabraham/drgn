@@ -12,7 +12,6 @@
 #ifndef DRGN_PROGRAM_H
 #define DRGN_PROGRAM_H
 
-#include <elfutils/libdwfl.h>
 #include <libelf.h>
 #include <sys/types.h>
 #ifdef WITH_LIBKDUMPFILE
@@ -30,6 +29,9 @@
 #include "symbol.h"
 #include "type.h"
 #include "vector.h"
+
+struct drgn_module;
+struct drgn_symbol;
 
 /**
  * @defgroup Internals Internals
@@ -118,6 +120,11 @@ struct drgn_program {
 	/* Default language of the program. */
 	const struct drgn_language *lang;
 	struct drgn_platform platform;
+	/**
+	 * Whether we have tried determining the default language from "main"
+	 * since the last time that debug info was added.
+	 */
+	bool tried_main_language;
 	bool has_platform;
 	enum drgn_program_flags flags;
 
@@ -143,6 +150,17 @@ struct drgn_program {
 	uint64_t aarch64_insn_pac_mask;
 	bool core_dump_notes_cached;
 	bool prefer_orc_unwinder;
+
+	// TODO: put this stuff in a union with Linux kernel stuff.
+	struct {
+		uint64_t at_phdr;
+		uint64_t at_phent;
+		uint64_t at_phnum;
+		uint64_t at_sysinfo_ehdr;
+	} auxv;
+	bool auxv_cached;
+	struct drgn_map_files_segment *map_files_segments;
+	size_t num_map_files_segments;
 
 	/*
 	 * Linux kernel-specific.
@@ -257,6 +275,8 @@ struct drgn_error *
 drgn_program_add_object_finder_impl(struct drgn_program *prog,
 				    struct drgn_object_finder *finder,
 				    drgn_object_find_fn fn, void *arg);
+
+struct drgn_error *drgn_program_cache_auxv(struct drgn_program *prog);
 
 static inline struct drgn_error *
 drgn_program_is_little_endian(struct drgn_program *prog, bool *ret)
