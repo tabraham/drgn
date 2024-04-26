@@ -293,7 +293,7 @@ class TestSymbolFinder(TestCase):
 
     def setUp(self):
         self.prog = Program()
-        self.prog.add_symbol_finder(self.finder)
+        self.prog.register_symbol_finder("test", self.finder, enable_index=0)
         self.called = False
 
     def expect_args(self, name, address, one):

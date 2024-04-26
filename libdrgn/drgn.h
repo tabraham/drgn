@@ -580,6 +580,11 @@ drgn_program_add_memory_segment(struct drgn_program *prog, uint64_t address,
  */
 bool drgn_filename_matches(const char *haystack, const char *needle);
 
+enum {
+	DRGN_HANDLER_REGISTER_ENABLE_LAST = SIZE_MAX - 1,
+	DRGN_HANDLER_REGISTER_DONT_ENABLE = SIZE_MAX,
+};
+
 /**
  * Callback for finding a type.
  *
@@ -985,17 +990,57 @@ typedef struct drgn_error *
 /**
  * Register a symbol finding callback.
  *
- * Callbacks are called in reverse order that they were originally added. In
- * case of a search for multiple symbols, then the results of all callbacks are
- * concatenated. If the search is for a single symbol, then the first callback
- * which finds a symbol will short-circuit the search.
- *
- * @param[in] fn Symbol search function
- * @param[in] arg Argument to pass to the callback
+ * @param[in] name Finder name. This is copied.
+ * @param[in] fn Callback.
+ * @param[in] arg Argument to pass to @p fn.
+ * @param[in] enable_index Insert the finder into the list of enabled finders at
+ * the given index. If @ref DRGN_HANDLER_REGISTER_ENABLE_LAST or greater than
+ * the number of enabled finders, insert it at the end. If @ref
+ * DRGN_HANDLER_REGISTER_DONT_ENABLE, don’t enable the finder.
  */
 struct drgn_error *
-drgn_program_add_symbol_finder(struct drgn_program *prog,
-			       drgn_symbol_find_fn fn, void *arg);
+drgn_program_register_symbol_finder(struct drgn_program *prog, const char *name,
+				    drgn_symbol_find_fn fn, void *arg,
+				    size_t enable_index);
+
+/**
+ * Get the names of all registered symbol finders.
+ *
+ * The order of the names is arbitrary.
+ *
+ * @param[out] names_ret Returned array of names.
+ * @param[out] count_ret Returned number of names in @p names_ret.
+ */
+struct drgn_error *
+drgn_program_registered_symbol_finders(struct drgn_program *prog,
+				       const char ***names_ret,
+				       size_t *count_ret);
+
+/**
+ * Set the list of enabled symbol finders.
+ *
+ * Finders are called in the same order as the list. In case of a search for
+ * multiple symbols, then the results of all callbacks are concatenated. If the
+ * search is for a single symbol, then the first callback which finds a symbol
+ * will short-circuit the search.
+ *
+ * @param[in] names Names of finders to enable, in order.
+ * @param[in] count Number of names in @p names.
+ */
+struct drgn_error *
+drgn_program_set_enabled_symbol_finders(struct drgn_program *prog,
+					const char * const *names,
+					size_t count);
+
+/**
+ * Get the names of enabled symbol finders, in order.
+ *
+ * @param[out] names_ret Returned array of names.
+ * @param[out] count_ret Returned number of names in @p names_ret.
+ */
+struct drgn_error *
+drgn_program_enabled_symbol_finders(struct drgn_program *prog,
+				    const char ***names_ret, size_t *count_ret);
 
 /** Element type and size. */
 struct drgn_element_info {

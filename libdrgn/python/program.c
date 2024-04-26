@@ -574,32 +574,125 @@ static PyObject *Program_add_object_finder(Program *self, PyObject *args,
 	Py_RETURN_NONE;
 }
 
-static PyObject *Program_add_symbol_finder(Program *self, PyObject *args,
-					   PyObject *kwds)
+static PyObject *Program_register_symbol_finder(Program *self, PyObject *args,
+						PyObject *kwds)
 {
-	static char *keywords[] = {"fn", NULL};
 	struct drgn_error *err;
+	static char *keywords[] = {"name", "fn", "enable_index", NULL};
+	const char *name;
 	PyObject *fn;
-	int ret;
-
-	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O:add_symbol_finder",
-					 keywords, &fn))
-	    return NULL;
-
-	if (!PyCallable_Check(fn)) {
-		PyErr_SetString(PyExc_TypeError, "fn must be callable");
+	PyObject *enable_index_obj = Py_None;
+	if (!PyArg_ParseTupleAndKeywords(args, kwds,
+					 "sO|$O:register_symbol_finder",
+					 keywords, &name, &fn,
+					 &enable_index_obj))
 		return NULL;
+	size_t enable_index;
+	if (enable_index_obj == Py_None) {
+		enable_index = DRGN_HANDLER_REGISTER_DONT_ENABLE;
+	} else {
+		_cleanup_pydecref_ PyObject *negative_one = PyLong_FromLong(-1);
+		if (!negative_one)
+			return NULL;
+		int eq = PyObject_RichCompareBool(enable_index_obj,
+						  negative_one, Py_EQ);
+		if (eq < 0)
+			return NULL;
+		if (eq) {
+			enable_index = DRGN_HANDLER_REGISTER_ENABLE_LAST;
+		} else {
+			enable_index = PyLong_AsSize_t(enable_index_obj);
+			if (enable_index == (size_t)-1 && PyErr_Occurred())
+				return NULL;
+			// If the index happens to be the
+			// DRGN_HANDLER_REGISTER_DONT_ENABLE sentinel
+			// (SIZE_MAX), set it to the largest value we allow.
+			if (enable_index == DRGN_HANDLER_REGISTER_DONT_ENABLE)
+				enable_index = DRGN_HANDLER_REGISTER_ENABLE_LAST;
+		}
 	}
-
-	ret = Program_hold_object(self, fn);
-	if (ret == -1)
+	if (!Program_hold_reserve(self, 1))
 		return NULL;
+	err = drgn_program_register_symbol_finder(&self->prog, name,
+						  py_symbol_find_fn, fn,
+						  enable_index);
+	if (err)
+		return set_drgn_error(err);
+	Program_hold_object(self, fn);
+	Py_RETURN_NONE;
+}
 
-	err = drgn_program_add_symbol_finder(&self->prog, py_symbol_find_fn,
-					     fn);
+static PyObject *Program_registered_symbol_finders(Program *self)
+{
+	struct drgn_error *err;
+	_cleanup_free_ const char **names = NULL;
+	size_t count;
+	err = drgn_program_registered_symbol_finders(&self->prog, &names, &count);
+	if (err)
+		return set_drgn_error(err);
+	_cleanup_pydecref_ PyObject *res = PySet_New(NULL);
+	if (!res)
+		return NULL;
+	for (size_t i = 0; i < count; i++) {
+		_cleanup_pydecref_ PyObject *name = PyUnicode_FromString(names[i]);
+		if (!name)
+			return NULL;
+		if (PySet_Add(res, name))
+			return NULL;
+	}
+	return_ptr(res);
+}
+
+static PyObject *Program_set_enabled_symbol_finders(Program *self,
+						    PyObject *args,
+						    PyObject *kwds)
+{
+	struct drgn_error *err;
+	static char *keywords[] = {"names", NULL};
+	PyObject *names_obj;
+	if (!PyArg_ParseTupleAndKeywords(args, kwds,
+					 "O:set_enabled_symbol_finders",
+					 keywords, &names_obj))
+		return NULL;
+	_cleanup_pydecref_ PyObject *names_seq =
+		PySequence_Fast(names_obj, "names must be sequence");
+	if (!names_seq)
+		return NULL;
+	size_t count = PySequence_Fast_GET_SIZE(names_seq);
+	_cleanup_free_ const char **names =
+		malloc_array(count, sizeof(names[0]));
+	if (!names)
+		return NULL;
+	for (size_t i = 0; i < count; i++) {
+		names[i] = PyUnicode_AsUTF8(PySequence_Fast_GET_ITEM(names_seq, i));
+		if (!names[i])
+			return NULL;
+	}
+	err = drgn_program_set_enabled_symbol_finders(&self->prog, names,
+						      count);
 	if (err)
 		return set_drgn_error(err);
 	Py_RETURN_NONE;
+}
+
+static PyObject *Program_enabled_symbol_finders(Program *self)
+{
+	struct drgn_error *err;
+	_cleanup_free_ const char **names = NULL;
+	size_t count;
+	err = drgn_program_enabled_symbol_finders(&self->prog, &names, &count);
+	if (err)
+		return set_drgn_error(err);
+	_cleanup_pydecref_ PyObject *res = PyList_New(count);
+	if (!res)
+		return NULL;
+	for (size_t i = 0; i < count; i++) {
+		PyObject *name = PyUnicode_FromString(names[i]);
+		if (!name)
+			return NULL;
+		PyList_SET_ITEM(res, i, name);
+	}
+	return_ptr(res);
 }
 
 static PyObject *Program_set_core_dump(Program *self, PyObject *args,
@@ -1253,8 +1346,17 @@ static PyMethodDef Program_methods[] = {
 	 METH_VARARGS | METH_KEYWORDS, drgn_Program_add_type_finder_DOC},
 	{"add_object_finder", (PyCFunction)Program_add_object_finder,
 	 METH_VARARGS | METH_KEYWORDS, drgn_Program_add_object_finder_DOC},
-	{"add_symbol_finder", (PyCFunction)Program_add_symbol_finder,
-	 METH_VARARGS | METH_KEYWORDS, drgn_Program_add_symbol_finder_DOC},
+	{"register_symbol_finder", (PyCFunction)Program_register_symbol_finder,
+	 METH_VARARGS | METH_KEYWORDS, drgn_Program_register_symbol_finder_DOC},
+	{"registered_symbol_finders",
+	 (PyCFunction)Program_registered_symbol_finders, METH_NOARGS,
+	 drgn_Program_registered_symbol_finders_DOC},
+	{"set_enabled_symbol_finders",
+	 (PyCFunction)Program_set_enabled_symbol_finders,
+	 METH_VARARGS | METH_KEYWORDS,
+	 drgn_Program_set_enabled_symbol_finders_DOC},
+	{"enabled_symbol_finders", (PyCFunction)Program_enabled_symbol_finders,
+	 METH_NOARGS, drgn_Program_enabled_symbol_finders_DOC},
 	{"set_core_dump", (PyCFunction)Program_set_core_dump,
 	 METH_VARARGS | METH_KEYWORDS, drgn_Program_set_core_dump_DOC},
 	{"set_kernel", (PyCFunction)Program_set_kernel, METH_NOARGS,

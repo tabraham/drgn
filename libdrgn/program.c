@@ -112,17 +112,6 @@ void drgn_program_init(struct drgn_program *prog,
 	drgn_object_init(&prog->vmemmap, prog);
 }
 
-static void drgn_program_deinit_symbol_finders(struct drgn_program *prog)
-{
-	struct drgn_symbol_finder *finder = prog->symbol_finders;
-	while (finder) {
-		struct drgn_symbol_finder *next = finder->next;
-		if (finder->free)
-			free(finder);
-		finder = next;
-	}
-}
-
 void drgn_program_deinit(struct drgn_program *prog)
 {
 	if (prog->core_dump_notes_cached) {
@@ -145,8 +134,8 @@ void drgn_program_deinit(struct drgn_program *prog)
 
 	drgn_object_deinit(&prog->vmemmap);
 
+	drgn_handler_list_deinit(&prog->symbol_finders);
 	drgn_object_index_deinit(&prog->oindex);
-	drgn_program_deinit_symbol_finders(prog);
 	drgn_program_deinit_types(prog);
 	drgn_memory_reader_deinit(&prog->reader);
 
@@ -1782,6 +1771,74 @@ drgn_program_find_object(struct drgn_program *prog, const char *name,
 				      ret);
 }
 
+struct drgn_error *
+drgn_program_register_symbol_finder_impl(struct drgn_program *prog,
+					 struct drgn_symbol_finder *finder,
+					 const char *name,
+					 drgn_symbol_find_fn fn, void *arg,
+					 size_t enable_index)
+{
+	struct drgn_error *err;
+	if (finder) {
+		finder->handler.name = name;
+		finder->handler.free = false;
+	} else {
+		finder = malloc(sizeof(*finder));
+		if (!finder)
+			return &drgn_enomem;
+		finder->handler.name = strdup(name);
+		if (!finder->handler.name) {
+			free(finder);
+			return &drgn_enomem;
+		}
+		finder->handler.free = true;
+	}
+	finder->fn = fn;
+	finder->arg = arg;
+	err = drgn_handler_list_register(&prog->symbol_finders,
+					 &finder->handler, enable_index,
+					 "symbol finder");
+	if (err && finder->handler.free) {
+		free((char *)finder->handler.name);
+		free(finder);
+	}
+	return err;
+}
+
+LIBDRGN_PUBLIC struct drgn_error *
+drgn_program_register_symbol_finder(struct drgn_program *prog, const char *name,
+				    drgn_symbol_find_fn fn, void *arg,
+				    size_t enable_index)
+{
+	return drgn_program_register_symbol_finder_impl(prog, NULL, name, fn,
+							arg, enable_index);
+}
+
+LIBDRGN_PUBLIC struct drgn_error *
+drgn_program_registered_symbol_finders(struct drgn_program *prog,
+				       const char ***names_ret,
+				       size_t *count_ret)
+{
+	return drgn_handler_list_registered(&prog->symbol_finders, names_ret,
+					    count_ret);
+}
+
+LIBDRGN_PUBLIC struct drgn_error *
+drgn_program_set_enabled_symbol_finders(struct drgn_program *prog,
+					const char * const *names, size_t count)
+{
+	return drgn_handler_list_set_enabled(&prog->symbol_finders, names,
+					     count, "symbol finder");
+}
+
+LIBDRGN_PUBLIC struct drgn_error *
+drgn_program_enabled_symbol_finders(struct drgn_program *prog,
+				    const char ***names_ret, size_t *count_ret)
+{
+	return drgn_handler_list_enabled(&prog->symbol_finders, names_ret,
+					 count_ret);
+}
+
 struct drgn_error *drgn_error_symbol_not_found(uint64_t address)
 {
 	return drgn_error_format(DRGN_ERROR_LOOKUP,
@@ -1795,44 +1852,15 @@ drgn_program_symbols_search(struct drgn_program *prog, const char *name,
 			    struct drgn_symbol_result_builder *builder)
 {
 	struct drgn_error *err = NULL;
-	struct drgn_symbol_finder *finder = prog->symbol_finders;
-	while (finder) {
+	drgn_handler_list_for_each_enabled(struct drgn_symbol_finder, finder,
+					   &prog->symbol_finders) {
 		err = finder->fn(name, addr, flags, finder->arg, builder);
 		if (err ||
 		    ((flags & DRGN_FIND_SYMBOL_ONE)
 		     && drgn_symbol_result_builder_count(builder) > 0))
 			break;
-		finder = finder->next;
 	}
 	return err;
-}
-
-struct drgn_error *
-drgn_program_add_symbol_finder_impl(struct drgn_program *prog,
-				    struct drgn_symbol_finder *finder,
-				    drgn_symbol_find_fn fn, void *arg)
-{
-	if (finder) {
-		finder->free = false;
-	} else {
-		finder = malloc(sizeof(*finder));
-		if (!finder)
-			return &drgn_enomem;
-		finder->free = true;
-	}
-	finder->fn = fn;
-	finder->arg = arg;
-	finder->next = prog->symbol_finders;
-	prog->symbol_finders = finder;
-	return NULL;
-}
-
-LIBDRGN_PUBLIC struct drgn_error *
-drgn_program_add_symbol_finder(struct drgn_program *prog,
-			       drgn_symbol_find_fn fn,
-			       void *arg)
-{
-	return drgn_program_add_symbol_finder_impl(prog, NULL, fn, arg);
 }
 
 LIBDRGN_PUBLIC struct drgn_error *

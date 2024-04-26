@@ -21,6 +21,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union,
     overload,
@@ -460,32 +461,59 @@ class Program:
             return an :class:`Object` or ``None`` if not found.
         """
         ...
-    def add_symbol_finder(
-        self, fn: Callable[[Optional[str], Optional[int], bool], Sequence[Symbol]]
+    def register_symbol_finder(
+        self,
+        name: str,
+        fn: Callable[[Optional[str], Optional[int], bool], Sequence[Symbol]],
+        *,
+        enable_index: Optional[int] = None,
     ) -> None:
         """
         Register a callback for finding symbols in the program.
 
+        This does not enable the finder unless *enable_index* is given.
+
         The callback should take three arguments: a search name, a search
-        address, and a boolean flag 'one' indicating whether to return only
-        the single best match. When the 'one' flag is True, the callback should
+        address, and a boolean flag *one* indicating whether to return only the
+        single best match. When the *one* flag is ``True``, the callback should
         return a list containing at most one :class:`Symbol`. When the flag is
-        False, the callback should return a list of all matching
+        ``False``, the callback should return a list of all matching
         :class:`Symbol`\\ s. Both the name and address arguments are optional.
         If both are provided, then the result(s) should match both. If neither
         are provided, the finder should return all available symbols. If no
         result is found, the return should be an empty list.
 
-        Callbacks are called in reverse order of the order they were added
-        (i.e,, the most recently added callback is called first). When the
-        'one' flag is set, the search will short-circuit after the first
-        finder which returns a result, and subsequent finders will not be
-        called. Otherwise, all callbacks will be called, and all results will be
-        returned.
-
-        :param fn: Callable taking name, address, and 'one' flag, and
-            returning a sequence of :class:`Symbol`\\ s.
+        :param name: Finder name.
+        :param fn: Callable taking ``(name, address, one)`` and returning a
+            sequence of :class:`Symbol`\\ s.
+        :param enable_index: Insert the finder into the list of enabled finders
+            at the given index. If -1 or greater than the number of enabled
+            finders, insert it at the end. If ``None`` or not given, don't
+            enable the finder.
+        :raises ValueError: if there is already a finder with the given name
         """
+        ...
+    def registered_symbol_finders(self) -> Set[str]:
+        """Return the names of all registered symbol finders."""
+        ...
+    def set_enabled_symbol_finders(self, names: Sequence[str]) -> None:
+        """
+        Set the list of enabled symbol finders.
+
+        Finders are called in the same order as the list. When the *one* flag
+        is set, the search will short-circuit after the first finder which
+        returns a result, and subsequent finders will not be called. Otherwise,
+        all callbacks will be called, and all results will be returned.
+
+        Finders that are not in the list are not called.
+
+        :param names: Names of finders to enable, in order.
+        :raises ValueError: if no finder has a given name or the same name is
+            given more than once
+        """
+        ...
+    def enabled_symbol_finders(self) -> List[str]:
+        """Return the names of enabled symbol finders, in order."""
         ...
     def set_core_dump(self, path: Union[Path, int]) -> None:
         """

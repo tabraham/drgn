@@ -21,6 +21,7 @@
 
 #include "debug_info.h"
 #include "drgn.h"
+#include "handler.h"
 #include "hash_table.h"
 #include "language.h"
 #include "memory_reader.h"
@@ -110,7 +111,7 @@ struct drgn_program {
 	 */
 	struct drgn_object_index oindex;
 	struct drgn_debug_info dbinfo;
-	struct drgn_symbol_finder *symbol_finders;
+	struct drgn_handler_list symbol_finders;
 
 	/*
 	 * Program information.
@@ -379,9 +380,12 @@ drgn_program_find_symbol_by_address_internal(struct drgn_program *prog,
 					     struct drgn_symbol **ret);
 
 struct drgn_error *
-drgn_program_add_symbol_finder_impl(struct drgn_program *prog,
-				    struct drgn_symbol_finder *finder,
-				    drgn_symbol_find_fn fn, void *arg);
+drgn_program_register_symbol_finder_impl(struct drgn_program *prog,
+					 struct drgn_symbol_finder *finder,
+					 const char *name,
+					 drgn_symbol_find_fn fn, void *arg,
+					 size_t enable_index);
+
 /**
  * Call before a blocking (I/O or long-running) operation.
  *
